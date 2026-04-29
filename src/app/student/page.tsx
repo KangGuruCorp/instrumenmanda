@@ -4,8 +4,6 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ClipboardList, BookOpen, BrainCircuit, CheckCircle, ArrowRight, LogOut } from "lucide-react";
 import { ESSAY_QUESTIONS } from "@/lib/constants";
-import { db } from "@/lib/firebase";
-import { doc, getDoc, onSnapshot, updateDoc } from "firebase/firestore";
 
 interface StudentData {
     angkets_1?: Record<number, number>;
@@ -18,7 +16,6 @@ export default function StudentDashboard() {
     const [studentName, setStudentName] = useState("");
     const [studentData, setStudentData] = useState<StudentData>({});
     const [loading, setLoading] = useState(true);
-
     useEffect(() => {
         const sId = sessionStorage.getItem("studentId");
         const sName = sessionStorage.getItem("studentName");
@@ -30,41 +27,28 @@ export default function StudentDashboard() {
 
         setStudentName(sName || "");
 
-        // 1. Real-time Cloud Sync
-        let unsub = () => { };
-        if (db) {
-            unsub = onSnapshot(doc(db, "students", sId), (docSnap) => {
-                if (docSnap.exists()) {
-                    setStudentData(docSnap.data());
+        // Local Storage Sync
+        const syncData = () => {
+            const localData = localStorage.getItem("localStudentsData");
+            if (localData) {
+                const students = JSON.parse(localData);
+                if (students[sId]) {
+                    setStudentData(students[sId]);
                 }
-                setLoading(false);
-            }, (error) => {
-                console.error("Dashboard sync error:", error);
-                setLoading(false);
-            });
-        }
-
-        // 2. Local Fallback (immediate UI if cloud slow)
-        const localData = localStorage.getItem("localStudentsData");
-        if (localData) {
-            const students = JSON.parse(localData);
-            if (students[sId]) {
-                setStudentData(students[sId]);
-                // We show local immediately but keep loading=true 
-                // until cloud snapshot overwrites it if needed
-                if (!db) setLoading(false);
             }
-        } else {
-            if (!db) setLoading(false);
-        }
+            setLoading(false);
+        };
 
-        return () => unsub();
+        syncData();
+        // Listen for local changes
+        window.addEventListener("storage", syncData);
+        return () => window.removeEventListener("storage", syncData);
     }, [router]);
 
     // Automatic status sync
     useEffect(() => {
         const sId = sessionStorage.getItem("studentId");
-        if (!sId || !db) return;
+        if (!sId) return;
 
         const angket1Ans = studentData.angkets_1 ? Object.keys(studentData.angkets_1).length : 0;
         const angket2Ans = studentData.angkets_2 ? Object.keys(studentData.angkets_2).length : 0;
@@ -82,8 +66,13 @@ export default function StudentDashboard() {
         })();
 
         if (angket1Ans === 41 && angket2Ans === 41 && isEssayDone && (studentData as any).status_progres !== 4) {
-            const docRef = doc(db, "students", sId);
-            updateDoc(docRef, { status_progres: 4 }).catch(console.error);
+            const localData = localStorage.getItem("localStudentsData");
+            const students = localData ? JSON.parse(localData) : {};
+            if (students[sId]) {
+                students[sId].status_progres = 4;
+                localStorage.setItem("localStudentsData", JSON.stringify(students));
+                setStudentData({ ...students[sId] });
+            }
         }
     }, [studentData]);
 
@@ -161,17 +150,8 @@ export default function StudentDashboard() {
                             </div>
                             <div className="flex items-center gap-3">
                                 <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 rounded-2xl border border-slate-100 shadow-sm h-fit">
-                                    {db ? (
-                                        <>
-                                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
-                                            <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-tight">Cloud Synced</span>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <div className="w-1.5 h-1.5 rounded-full bg-amber-500"></div>
-                                            <span className="text-[10px] font-bold text-amber-600 uppercase tracking-tight">Local Cache</span>
-                                        </>
-                                    )}
+                                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>
+                                    <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-tight">Local Storage</span>
                                 </div>
                                 <button
                                     onClick={handleLogout}

@@ -2,8 +2,6 @@
 
 import { useSearchParams, useRouter } from "next/navigation";
 import { useEffect, useState, Suspense } from "react";
-import { doc, getDoc, updateDoc, setDoc, onSnapshot } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { Loader2, Save, Home, BrainCircuit, CheckCircle } from "lucide-react";
 import { useRef } from "react";
 
@@ -51,34 +49,9 @@ function InstrumentContent() {
         const currentStep = stepParam ? parseInt(stepParam) : 1;
         setStep(currentStep);
 
-        // 2. Real-time Cloud Sync
-        let unsub = () => { };
-        if (db) {
-            unsub = onSnapshot(doc(db, "students", sId), (docSnap) => {
-                if (docSnap.exists() && !saving) {
-                    const data = docSnap.data();
-                    if (data.angkets_1) setAngket1(data.angkets_1);
-                    if (data.angkets_2) setAngket2(data.angkets_2);
-                    if (data.essay_answer) {
-                        if (typeof data.essay_answer === "string") {
-                            setEssayAnswers({ 0: data.essay_answer });
-                        } else {
-                            setEssayAnswers(data.essay_answer);
-                        }
-                    }
-                }
-                setLoading(false);
-            }, (error) => {
-                console.error("Instrument sync error:", error);
-                setLoading(false);
-            });
-        } else {
-            setLoading(false);
-        }
-
-        // 2. Initial Fallback to local
+        // 2. Load from local
         const localData = localStorage.getItem("localStudentsData");
-        if (localData && !db) {
+        if (localData) {
             const students = JSON.parse(localData);
             if (students[sId]) {
                 const data = students[sId];
@@ -93,14 +66,12 @@ function InstrumentContent() {
                 }
             }
         }
-
-        return () => unsub();
-    }, [stepParam, router, saving]);
+        setLoading(false);
+    }, [stepParam, router]);
 
     const autoSaveAngket = async (stage: 1 | 2, updatedData: Record<number, number>) => {
         setSaving(true);
         try {
-            // 1. Save to LocalStorage for safety
             const localData = localStorage.getItem("localStudentsData");
             if (localData) {
                 const students = JSON.parse(localData);
@@ -109,25 +80,9 @@ function InstrumentContent() {
                     if (stage === 2) students[studentId].angkets_2 = updatedData;
                     const start = localStorage.getItem(`start_${studentId}`);
                     if (start) { students[studentId].completion_time_ms = Date.now() - parseInt(start); }
+                    students[studentId].lastUpdated = new Date().toISOString();
                     localStorage.setItem("localStudentsData", JSON.stringify(students));
                 }
-            }
-
-            // 2. Sync to Firestore
-            if (db) {
-                const docRef = doc(db, "students", studentId);
-                const updatePayload: any = {
-                    lastUpdated: new Date().toISOString()
-                };
-                if (stage === 1) updatePayload.angkets_1 = updatedData;
-                if (stage === 2) updatePayload.angkets_2 = updatedData;
-
-                await updateDoc(docRef, updatePayload).catch(async (err) => {
-                    // If doc doesn't exist, create it (should be created at login)
-                    if (err.code === "not-found") {
-                        await setDoc(docRef, updatePayload, { merge: true });
-                    }
-                });
             }
         } catch (e) {
             console.error("AutoSave error:", e);
@@ -140,7 +95,6 @@ function InstrumentContent() {
         setSaving(true);
         setEssayAnswers(val);
         try {
-            // 1. Local
             const localData = localStorage.getItem("localStudentsData");
             if (localData) {
                 const students = JSON.parse(localData);
@@ -148,21 +102,9 @@ function InstrumentContent() {
                     students[studentId].essay_answer = val;
                     const start = localStorage.getItem(`start_${studentId}`);
                     if (start) { students[studentId].completion_time_ms = Date.now() - parseInt(start); }
+                    students[studentId].lastUpdated = new Date().toISOString();
                     localStorage.setItem("localStudentsData", JSON.stringify(students));
                 }
-            }
-
-            // 2. Firebase
-            if (db) {
-                const docRef = doc(db, "students", studentId);
-                await updateDoc(docRef, {
-                    essay_answer: val,
-                    lastUpdated: new Date().toISOString()
-                }).catch(async (err) => {
-                    if (err.code === "not-found") {
-                        await setDoc(docRef, { essay_answer: val, lastUpdated: new Date().toISOString() }, { merge: true });
-                    }
-                });
             }
         } catch (e) {
             console.error("AutoSave Essay error:", e);

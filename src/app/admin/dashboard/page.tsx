@@ -1,9 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { collection, getDocs, doc, updateDoc, onSnapshot, deleteDoc } from "firebase/firestore";
-import { onAuthStateChanged, signOut } from "firebase/auth";
-import { db, auth } from "@/lib/firebase";
 import { useRouter } from "next/navigation";
 import { Users, BookOpen, CheckCircle, Download, LogOut, Edit, Eye, Trash2, Search, Filter, AlertTriangle, Sparkles, Zap, Wand2, Settings, Flag, Home, BrainCircuit, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 import * as XLSX from "xlsx";
@@ -61,18 +58,20 @@ export default function AdminDashboard() {
     useEffect(() => {
         if (authChecking) return;
 
-        // 1. Real-time Firestore Sync
         setLoading(true);
-        const unsub = onSnapshot(collection(db, "students"), (snapshot) => {
-            const studentsList = snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            })) as Student[];
-            setStudents(studentsList);
+        const syncData = () => {
+            const localData = localStorage.getItem("localStudentsData");
+            if (localData) {
+                const studentsObj = JSON.parse(localData);
+                const studentsList = Object.values(studentsObj) as Student[];
+                setStudents(studentsList);
+            }
             setLoading(false);
-        });
+        };
 
-        return () => unsub();
+        syncData();
+        window.addEventListener("storage", syncData);
+        return () => window.removeEventListener("storage", syncData);
     }, [authChecking]);
 
     useEffect(() => {
@@ -197,10 +196,9 @@ export default function AdminDashboard() {
     }).length;
 
 
-    const handleLogout = async () => {
+    const handleLogout = () => {
         if (confirm("Apakah Anda yakin ingin keluar dari Portal Peneliti?")) {
             sessionStorage.removeItem("adminAuth");
-            await signOut(auth);
             router.push("/admin/login");
         }
     };
@@ -622,22 +620,17 @@ export default function AdminDashboard() {
         }
         if (confirm(`Apakah Anda yakin ingin menghapus respon dari "${name}"? Tindakan ini tidak dapat dibatalkan.`)) {
             try {
-                console.log("Attempting to delete student with ID:", id);
-                const studentRef = doc(db, "students", id);
-                await deleteDoc(studentRef);
-
-                // Also clean up local storage if it was ever used as a cache
                 const localData = localStorage.getItem("localStudentsData");
                 if (localData) {
                     const studentsMap = JSON.parse(localData);
                     delete studentsMap[id];
                     localStorage.setItem("localStudentsData", JSON.stringify(studentsMap));
+                    setStudents(Object.values(studentsMap));
                 }
-
-                alert(`Data responden "${name}" telah berhasil dihapus dari cloud.`);
+                alert(`Data responden "${name}" telah berhasil dihapus secara lokal.`);
             } catch (err: any) {
-                console.error("Firebase delete failed:", err);
-                alert(`Gagal menghapus data: ${err.message || "Kesalahan pada server Firestore"}`);
+                console.error("Delete failed:", err);
+                alert(`Gagal menghapus data: ${err.message || "Kesalahan lokal"}`);
             }
         }
     };
@@ -650,7 +643,7 @@ export default function AdminDashboard() {
 
             const newScores = { ...(student.essay_scores || {}), [essayIdx]: Number(val) };
 
-            // Update LocalStorage (Dashboard State Source)
+            // Update LocalStorage
             const localDataStore = localStorage.getItem("localStudentsData");
             if (localDataStore) {
                 const studentsMap = JSON.parse(localDataStore);
@@ -659,14 +652,6 @@ export default function AdminDashboard() {
                     localStorage.setItem("localStudentsData", JSON.stringify(studentsMap));
                     setStudents(Object.values(studentsMap));
                 }
-            }
-
-            // Sync with Firestore (Persistent Data)
-            try {
-                const studentRef = doc(db, "students", studentId);
-                await updateDoc(studentRef, { essay_scores: newScores });
-            } catch (fsErr) {
-                console.warn("Firestore sync failed:", fsErr);
             }
 
             // If we are in the modal, update modal state too
@@ -767,10 +752,9 @@ export default function AdminDashboard() {
                         const data = await res.json();
                         if (data.score !== undefined) {
                             currentScores[i] = data.score;
-                            // Update state locally for real-time feedback
+                            // Update state locally
                             setStudents(prev => prev.map(s => s.id === student.id ? { ...s, essay_scores: { ...currentScores } } : s));
 
-                            // Real-time Sync to LocalStorage
                             const localDataStore = localStorage.getItem("localStudentsData");
                             if (localDataStore) {
                                 const map = JSON.parse(localDataStore);
@@ -786,16 +770,13 @@ export default function AdminDashboard() {
                 }
             }
 
-            // Sync to Firestore
-            const studentRef = doc(db, "students", student.id);
-            await updateDoc(studentRef, { essay_scores: currentScores });
-
-            // Sync to LocalStorage (Dashboard Source of Truth)
+            // Sync to LocalStorage
             const localData = localStorage.getItem("localStudentsData");
             if (localData) {
                 const studentsMap = JSON.parse(localData);
                 if (studentsMap[student.id]) {
                     studentsMap[student.id].essay_scores = currentScores;
+                    studentsMap[student.id].status_progres = 4;
                     localStorage.setItem("localStudentsData", JSON.stringify(studentsMap));
                     setStudents(Object.values(studentsMap));
                 }
@@ -844,7 +825,7 @@ export default function AdminDashboard() {
                         currentScores[i] = data.score;
                         setStudents(prev => prev.map(s => s.id === gradingModal.id ? { ...s, essay_scores: { ...currentScores } } : s));
 
-                        // Real-time Sync to LocalStorage
+                        // Sync to LocalStorage
                         const lData = localStorage.getItem("localStudentsData");
                         if (lData) {
                             const lMap = JSON.parse(lData);
@@ -857,16 +838,9 @@ export default function AdminDashboard() {
                 }
             }
 
-            // Save all scores at once
-            const studentRef = doc(db, "students", gradingModal.id);
-            await updateDoc(studentRef, {
-                essay_scores: currentScores,
-                status_progres: 4 // Mark as fully graded if desired or just update
-            });
-
             setGradingModal({ ...gradingModal, essay_scores: currentScores });
 
-            // Sync with LocalStorage
+            // Final Sync
             const localData = localStorage.getItem("localStudentsData");
             if (localData) {
                 const studentsMap = JSON.parse(localData);
@@ -893,11 +867,6 @@ export default function AdminDashboard() {
 
         setGradingLoading(true);
         try {
-            const studentRef = doc(db, "students", gradingModal.id);
-            await updateDoc(studentRef, {
-                essay_scores: {},
-            });
-
             setGradingModal({ ...gradingModal, essay_scores: {} });
 
             // Sync with LocalStorage
@@ -913,7 +882,7 @@ export default function AdminDashboard() {
 
             setScoreInput("");
             setAiFeedback(null);
-            alert("Penilaian berhasil di-reset.");
+            alert("Penilaian berhasil di-reset secara lokal.");
         } catch (error) {
             console.error(error);
             alert("Terjadi kesalahan saat me-reset penilaian.");

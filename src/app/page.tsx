@@ -2,8 +2,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { collection, query, where, getDocs, setDoc, doc } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { Loader2 } from "lucide-react";
 
 export default function StudentLogin() {
@@ -23,48 +21,25 @@ export default function StudentLogin() {
       let studentId = "";
       let existingData: any = null;
 
-      // 1. Try to find existing student in Firestore
-      if (db) {
-        const q = query(
-          collection(db, "students"),
-          where("name", "==", cleanName),
-          where("school", "==", cleanSchool)
-        );
-        const querySnapshot = await getDocs(q);
+      // Check local storage for existing student
+      const localData = localStorage.getItem("localStudentsData");
+      const students = localData ? JSON.parse(localData) : {};
+      const localStudent = Object.values(students).find((s: any) =>
+        s.name === cleanName && s.school === cleanSchool
+      );
 
-        if (!querySnapshot.empty) {
-          const docSnap = querySnapshot.docs[0];
-          studentId = docSnap.id;
-          existingData = docSnap.data();
-        }
-      }
-
-      // 2. If not found in cloud, check local (migration) or create new
-      if (!studentId) {
-        const localData = localStorage.getItem("localStudentsData");
-        const students = localData ? JSON.parse(localData) : {};
-        const localStudent = Object.values(students).find((s: any) =>
-          s.name === cleanName && s.school === cleanSchool
-        );
-
-        if (localStudent) {
-          studentId = (localStudent as any).id;
-          existingData = localStudent;
-        } else {
-          studentId = "std-" + Date.now();
-          existingData = {
-            id: studentId,
-            name: cleanName,
-            school: cleanSchool,
-            createdAt: new Date().toISOString(),
-            status_progres: 0
-          };
-        }
-
-        // Initial Sync to Cloud if new or migration
-        if (db) {
-          await setDoc(doc(db, "students", studentId), existingData);
-        }
+      if (localStudent) {
+        studentId = (localStudent as any).id;
+        existingData = localStudent;
+      } else {
+        studentId = "std-" + Date.now();
+        existingData = {
+          id: studentId,
+          name: cleanName,
+          school: cleanSchool,
+          createdAt: new Date().toISOString(),
+          status_progres: 0
+        };
       }
 
       // 3. Save to Session/LocalStorage
@@ -73,10 +48,9 @@ export default function StudentLogin() {
       sessionStorage.setItem("studentSchool", existingData.school || cleanSchool);
       localStorage.setItem(`start_${studentId}`, Date.now().toString());
 
-      const localData = localStorage.getItem("localStudentsData");
-      let students = localData ? JSON.parse(localData) : {};
-      students[studentId] = { ...existingData, lastLogin: new Date().toISOString() };
-      localStorage.setItem("localStudentsData", JSON.stringify(students));
+      const updatedStudents = { ...students };
+      updatedStudents[studentId] = { ...existingData, lastLogin: new Date().toISOString() };
+      localStorage.setItem("localStudentsData", JSON.stringify(updatedStudents));
 
       router.push("/student");
     } catch (error) {
