@@ -19,7 +19,9 @@ let db: any;
 let auth: any;
 let analytics: any;
 
-if (firebaseConfig.apiKey) {
+const isConfigValid = firebaseConfig.apiKey && firebaseConfig.apiKey !== "undefined" && firebaseConfig.apiKey.trim() !== "";
+
+if (isConfigValid) {
   try {
     app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
     db = getFirestore(app);
